@@ -90,8 +90,8 @@ class gcMap{
 		$this->db = GCApp::getDB();
 		
 		$sql = "SELECT mapset.*, ".
-			" x(st_transform(geometryfromtext('POINT('||xc||' '||yc||')',project_srid),mapset_srid)) as xc, ".
-			" y(st_transform(geometryfromtext('POINT('||xc||' '||yc||')',project_srid),mapset_srid)) as yc, ".
+			" st_x(st_transform(st_geometryfromtext('POINT('||xc||' '||yc||')',project_srid),mapset_srid)) as xc, ".
+			" st_y(st_transform(st_geometryfromtext('POINT('||xc||' '||yc||')',project_srid),mapset_srid)) as yc, ".
 			" max_extent_scale, project_title FROM ".DB_SCHEMA.".mapset ".
 			" INNER JOIN ".DB_SCHEMA.".project USING (project_name) WHERE mapset_name=?";
 		$stmt = $this->db->prepare($sql);
