@@ -1534,4 +1534,191 @@ UPDATE mapset SET mapset_scale_type = 1 WHERE mapset_srid=3857;
 INSERT INTO version (version_name,version_key, version_date) values ('3.2.26', 'author', '2014-11-21');
 
 
+-- permette di ordinare i mapset su una pagina secondo l'ordine deciso dal cliente
+ALTER TABLE mapset
+  ADD COLUMN mapset_order integer NOT NULL DEFAULT 0;
+  
+INSERT INTO version (version_name,version_key, version_date) values ('3.2.27', 'author', '2014-11-21');
+
+--correzione delle view di controllo se layergroup.layer esiste nello stesso progetto + view link e sizeunits_id not null
+
+DROP VIEW IF EXISTS vista_mapset;
+CREATE OR REPLACE VIEW vista_mapset AS 
+select m.*,
+  CASE 
+    when mapset_name not in (select mapset_name from mapset_layergroup) then '(!) Nessun layergroup presente'
+    when 75 <= (select count(layergroup_id) from mapset_layergroup where mapset_name=m.mapset_name group by mapset_name) then '(!) '||(select count(layergroup_id) from mapset_layergroup where mapset_name=m.mapset_name group by mapset_name)||' layergroup presenti nel mapset. OpenLayers 2 non consente di rappresentare più di 74 layergroup alla volta'
+    WHEN mapset_scales is null THEN '(!) Nessun elenco di scale configurato'
+    WHEN mapset_srid != displayprojection then '(i) Coordinate visualizzate diverse da quelle di mappa'
+    WHEN 0 = (select max(refmap) from mapset_layergroup where mapset_name=m.mapset_name group by mapset_name) THEN '(i) Nessuna reference map'
+    ELSE 'OK'
+  END as mapset_control
+from mapset m;
+
+ALTER TABLE vista_mapset
+  OWNER TO gisclient;  
+
+DROP VIEW IF EXISTS vista_layer;
+CREATE OR REPLACE VIEW vista_layer AS 
+ SELECT l.*, 
+        CASE
+          WHEN queryable = 1 and l.hidden = 0 and 
+               layer_id IN (SELECT qtfield.layer_id 
+                              FROM qtfield 
+                              WHERE qtfield.resultype_id != 4)
+          THEN 'SI. Config. OK'
+          WHEN queryable = 1 and l.hidden = 1 and
+               layer_id IN (SELECT qtfield.layer_id 
+                              FROM qtfield 
+                              WHERE qtfield.resultype_id != 4)
+          THEN 'SI. Ma è nascosto'
+          WHEN queryable = 1 and 
+               layer_id IN (SELECT qtfield.layer_id 
+                              FROM qtfield 
+                              WHERE qtfield.resultype_id = 4)
+          THEN 'NO. Nessun campo nei risultati'
+          ELSE 'NO. WFS non abilitato'
+        END AS is_queryable, 
+        CASE
+            WHEN queryable = 1 and layer_id IN ( SELECT qtfield.layer_id
+               FROM qtfield
+              WHERE qtfield.editable = 1)
+            THEN 'SI. Config. OK' 
+            WHEN queryable = 1 and layer_id IN ( SELECT qtfield.layer_id
+               FROM qtfield
+              WHERE qtfield.editable = 0)
+            THEN 'NO. Nessun campo è editabile' 
+            WHEN queryable = 0 and layer_id IN ( SELECT qtfield.layer_id
+               FROM qtfield
+              WHERE qtfield.editable = 1)
+            THEN 'NO. Esiste un campo editabile ma il WFS non è attivo' 
+            ELSE 'NO.'
+        END AS is_editable,
+        CASE
+            WHEN connection_type != 6 then '(i) Controllo non possibile: connessione non PostGIS'
+            WHEN substring(c.catalog_path,0,position('/' in c.catalog_path)) != current_database() then '(i) Controllo non possibile: DB diverso'
+            WHEN data not in (select table_name FROM information_schema.tables where table_schema=substring(catalog_path,position('/' in catalog_path)+1,length(catalog_path)))  THEN '(!) La tabella non esiste nel DB'
+            when data_geom not in (select column_name FROM information_schema.columns where table_schema=substring(catalog_path,position('/' in catalog_path)+1,length(catalog_path)) and table_name = data and data_type = 'USER-DEFINED') then '(!) Il campo geometrico del layer non esiste'
+            when data_unique not in (select column_name FROM information_schema.columns where table_schema=substring(catalog_path,position('/' in catalog_path)+1,length(catalog_path)) and table_name = data) then '(!) Il campo chiave del layer non esiste'
+            when data_srid not in (select srid FROM public.geometry_columns where f_table_schema=substring(catalog_path,position('/' in catalog_path)+1,length(catalog_path)) and f_table_name=data) then '(!) Lo SRID configurato non è quello corretto'
+            when upper(data_type) not in (select type FROM public.geometry_columns where f_table_schema=substring(catalog_path,position('/' in catalog_path)+1,length(catalog_path)) and f_table_name=data) then '(!) Geometrytype non corretto'
+            WHEN labelitem not in (select column_name FROM information_schema.columns where table_schema=substring(catalog_path,position('/' in catalog_path)+1,length(catalog_path)) and table_name = data) then '(!) Il campo etichetta del layer non esiste'
+            WHEN labelitem not in (select qtfield_name FROM qtfield where layer_id = l.layer_id) then '(!) Campo etichetta non presente nei campi del layer'
+            WHEN labelsizeitem not in (select column_name FROM information_schema.columns where table_schema=substring(catalog_path,position('/' in catalog_path)+1,length(catalog_path)) and table_name = data) then '(!) Il campo altezza etichetta del layer non esiste'
+            WHEN labelsizeitem not in (select qtfield_name FROM qtfield where layer_id = l.layer_id) then '(!) Campo altezza etichetta non presente nei campi del layer'
+            --WHEN layer_name in (select distinct layer_name FROM layer where layergroup_id != lg.layergroup_id and catalog_id in (select catalog_id FROM catalog where project_name = c.project_name)) THEN '(!) Combinazione nome layergroup + nome layer non univoca. Cambiare nome al layer o al layergroup'
+            WHEN t.project_name||'.'||lg.layergroup_name||'.'||l.layer_name IN (select t2.project_name||'.'||lg2.layergroup_name||'.'||l2.layer_name 
+										  from layer l2
+										  JOIN layergroup lg2 using (layergroup_id)
+										  JOIN theme t2 using (theme_id)
+										  group by t2.project_name||'.'||lg2.layergroup_name||'.'||l2.layer_name
+										  having count(t2.project_name||'.'||lg2.layergroup_name||'.'||l2.layer_name) > 1) 
+										THEN '(!) Combinazione nome layergroup + nome layer non univoca. Cambiare nome al layer o al layergroup'
+            WHEN layer_id not in (select layer_id FROM class) then 'OK (i) Non ci sono classi configurate in questo layer'
+
+            ELSE 'OK'
+          END as layer_control
+   FROM layer l
+JOIN catalog c using (catalog_id)
+JOIN e_layertype using (layertype_id)
+JOIN layergroup lg using (layergroup_id)
+JOIN theme t using (theme_id);
+
+ALTER TABLE vista_layer
+  OWNER TO gisclient;
+
+DROP VIEW IF EXISTS vista_layergroup;  
+CREATE OR REPLACE VIEW vista_layergroup AS 
+select lg.*,
+CASE 
+  WHEN tiles_extent_srid is not null and tiles_extent_srid not in (select srid from project_srs where project_name=t.project_name) THEN '(!) SRID estensione tiles non presente nei sistemi di riferimento del progetto'
+  WHEN owstype_id=6 and url is null then '(!) Nessuna URL configurata per la chiamata TMS'
+  WHEN owstype_id=6 and layers is null then '(!) Nessun layer configurato per la chiamata TMS'
+  WHEN owstype_id=9 and url is null then '(!) Nessuna URL configurata per la chiamata WMTS'
+  WHEN owstype_id=9 and layers is null then '(!) Nessun layer configurato per la chiamata WMTS'
+  WHEN owstype_id=9 and tile_matrix_set is null then '(!) Nessun Tile Matrix configurato per la chiamata WMTS'
+  WHEN owstype_id=9 and style is null then '(!) Nessuno stile configurato per la chiamata WMTS'
+  WHEN owstype_id=9 and tile_origin is null then '(!) Nessuna origine configurata per la chiamata WMTS'
+  WHEN lg.opacity is null or lg.opacity = '0' then '(i) Attenzione: trasparenza totale'
+  WHEN (layergroup_id not in (select layergroup_id FROM layer)) AND layers is null then 'OK (i) Non ci sono layer configurati in questo layergroup'
+  ELSE 'OK'
+END as layergroup_control
+
+from layergroup lg
+JOIN theme t USING (theme_id);
+
+ALTER TABLE vista_layergroup
+  OWNER TO gisclient;  
+ 
+
+DROP VIEW IF EXISTS vista_link;
+CREATE OR REPLACE VIEW vista_link AS 
+select l.*,
+  CASE 
+    when link_def not like 'http%://%@%@' THEN '(!) Definizione del link non corretta. La sintassi deve essere: http://url@campo@'
+    WHEN link_id not in (select link_id from qtlink) then 'OK. Non utilizzato'
+    WHEN replace(substring(link_def from '%#"@%@#"%' for '#'),'@','') not in (select qtfield_name from qtfield where layer_id in (select layer_id from qtlink where link_id=l.link_id))   THEN   '(!) Campo non presente nel layer'
+    ELSE 'OK. In uso'
+  END as link_control
+from link l;
+
+ALTER TABLE gisclient_32.layer ALTER COLUMN sizeunits_id SET NOT NULL;
+
+INSERT INTO version (version_name,version_key, version_date) values ('3.2.28', 'author', '2015-02-26');
+
+
+-- add lookup for wms version
+CREATE TABLE gisclient_32.e_wmsversion
+(
+  wmsversion_id smallint NOT NULL,
+  wmsversion_name character varying NOT NULL,
+  wmsversion_order smallint,
+  CONSTRAINT e_wmsversion_pkey PRIMARY KEY (wmsversion_id)
+)
+WITH (
+  OIDS=FALSE
+);
+ALTER TABLE gisclient_32.e_wmsversion
+  OWNER TO gisclient;
+ALTER TABLE gisclient_32.layergroup
+  ADD COLUMN wmsversion_id integer;
+ALTER TABLE gisclient_32.layergroup
+  ADD FOREIGN KEY (wmsversion_id) REFERENCES gisclient_32.e_wmsversion (wmsversion_id) ON UPDATE NO ACTION ON DELETE NO ACTION;
+
+
+INSERT INTO gisclient_32.e_wmsversion (wmsversion_id, wmsversion_name, wmsversion_order ) 
+VALUES (1, '1.0.0', 100), (2, '1.1.0', 110), (3, '1.1.1', 111), (4, '1.3.0', 130);
+
+
+DROP VIEW IF EXISTS vista_layergroup;  
+CREATE OR REPLACE VIEW vista_layergroup AS 
+select lg.*,
+CASE 
+  WHEN tiles_extent_srid is not null and tiles_extent_srid not in (select srid from project_srs where project_name=t.project_name) THEN '(!) SRID estensione tiles non presente nei sistemi di riferimento del progetto'
+  WHEN owstype_id=6 and url is null then '(!) Nessuna URL configurata per la chiamata TMS'
+  WHEN owstype_id=6 and layers is null then '(!) Nessun layer configurato per la chiamata TMS'
+  WHEN owstype_id=9 and url is null then '(!) Nessuna URL configurata per la chiamata WMTS'
+  WHEN owstype_id=9 and layers is null then '(!) Nessun layer configurato per la chiamata WMTS'
+  WHEN owstype_id=9 and tile_matrix_set is null then '(!) Nessun Tile Matrix configurato per la chiamata WMTS'
+  WHEN owstype_id=9 and style is null then '(!) Nessuno stile configurato per la chiamata WMTS'
+  WHEN owstype_id=9 and tile_origin is null then '(!) Nessuna origine configurata per la chiamata WMTS'
+  WHEN lg.opacity is null or lg.opacity = '0' then '(i) Attenzione: trasparenza totale'
+  WHEN (layergroup_id not in (select layergroup_id FROM layer)) AND layers is null then 'OK (i) Non ci sono layer configurati in questo layergroup'
+  ELSE 'OK'
+END as layergroup_control
+from layergroup lg
+JOIN theme t USING (theme_id);
+
+ALTER TABLE vista_layergroup
+  OWNER TO gisclient;  
+
+CREATE OR REPLACE VIEW seldb_wmsversion AS 
+ SELECT NULL AS id, 'Seleziona ====>' AS opzione, -1 as wmsversion_order
+ UNION 
+( SELECT wmsversion_id AS id, wmsversion_name AS opzione, wmsversion_order
+   FROM e_wmsversion
+  )
+  ORDER BY wmsversion_order
+
+INSERT INTO version (version_name,version_key, version_date) values ('3.2.29', 'author', '2015-04-20');
 
