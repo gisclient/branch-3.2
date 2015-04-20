@@ -1002,4 +1002,3 @@ class gcMap{
 	
 	
 }
->>>>>>> 9112e73f8de4463bd9a27caa98b9a5b0d7cd2d96
