@@ -216,7 +216,8 @@ class gcMap{
 		if ($this->authorizedLayers) {
 			$sqlPrivateLayers = " OR layer_id IN (".implode(',', $this->authorizedLayers).")";
 		}
-		$sqlLayers = "SELECT theme_id,theme_name,theme_title,theme_single,theme.radio,theme.copyright_string,layergroup.*,mapset_layergroup.*,outputformat_mimetype,outputformat_extension FROM ".DB_SCHEMA.".layergroup INNER JOIN ".DB_SCHEMA.".mapset_layergroup using (layergroup_id) INNER JOIN ".DB_SCHEMA.".theme using(theme_id) LEFT JOIN ".DB_SCHEMA.".e_outputformat using (outputformat_id) 
+		$sqlLayers = "SELECT theme_id,theme_name,theme_title,theme_single,theme.radio,theme.copyright_string,layergroup.*,mapset_layergroup.*,outputformat_mimetype,outputformat_extension, wmsversion_name
+		    FROM ".DB_SCHEMA.".layergroup INNER JOIN ".DB_SCHEMA.".mapset_layergroup using (layergroup_id) INNER JOIN ".DB_SCHEMA.".theme using(theme_id) LEFT JOIN ".DB_SCHEMA.".e_outputformat using (outputformat_id) LEFT JOIN ".DB_SCHEMA.".e_wmsversion using (wmsversion_id)
 			WHERE layergroup_id IN (
 				SELECT layergroup_id FROM ".DB_SCHEMA.".layer WHERE layer.private = 0 ".$sqlPrivateLayers;
 		$sqlLayers .= " UNION
@@ -285,6 +286,7 @@ class gcMap{
 				$layerParameters["format"] = $row["outputformat_mimetype"];
 				$layerParameters["transparent"] = true;
 				$layerParameters['gisclient_map'] = 1;
+				$layerParameters['version'] = $row["wmsversion_name"];
 				if(!empty($_REQUEST["tmp"])) $layerParameters['tmp'] = 1;
                 
                 if (!empty($row['url']) && (!empty($row['layers']) || $row['layers'] == '0')) { 
