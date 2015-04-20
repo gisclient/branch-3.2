@@ -285,7 +285,7 @@ class gcMap{
 				$layerParameters["format"] = $row["outputformat_mimetype"];
 				$layerParameters["transparent"] = true;
 				$layerParameters['gisclient_map'] = 1;
-                                $layerParameters['version'] = $row["wmsversion_name"];
+                                if(!empty($row["wmsversion_name"])) $layerParameters['version'] = $row["wmsversion_name"];
 				if(!empty($_REQUEST["tmp"])) $layerParameters['tmp'] = 1;
                 
                 if (!empty($row['url']) && (!empty($row['layers']) || $row['layers'] == '0')) { 
