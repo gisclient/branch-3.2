@@ -1718,7 +1718,7 @@ CREATE OR REPLACE VIEW seldb_wmsversion AS
 ( SELECT wmsversion_id AS id, wmsversion_name AS opzione, wmsversion_order
    FROM e_wmsversion
   )
-  ORDER BY wmsversion_order
+  ORDER BY wmsversion_order;
 
 INSERT INTO version (version_name,version_key, version_date) values ('3.2.29', 'author', '2015-04-20');
 
