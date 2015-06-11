@@ -2,4 +2,4 @@
 
 GisClient is a platform for publishing spatial data.
 
-This branch is actively mantained.
+This branch is no longer mantained.
